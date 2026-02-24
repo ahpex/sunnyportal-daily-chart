@@ -1,9 +1,9 @@
 [package]
 name = "sunnyportal-daily-chart"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-image = "0.25.6"
-anyhow = "1.0.80"
-clap = { version = "4.5.1", features = ["derive"] }
+image = "0.25.9"
+anyhow = "1.0.102"
+clap = { version = "4.5.60", features = ["derive"] }
