@@ -7,3 +7,5 @@ edition = "2024"
 image = "0.25.9"
 anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
+tesseract = "0.15.2"
+tempdir = "0.3.7"

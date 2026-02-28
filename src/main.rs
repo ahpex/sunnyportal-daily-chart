@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use image::{DynamicImage, GenericImageView, Rgba};
+use image::{DynamicImage, GenericImageView, Rgba, imageops::FilterType};
+use tempdir::TempDir;
+use tesseract::Tesseract;
 
 const CHART_WIDTH: u32 = 700;
 const CHART_HEIGHT: u32 = 250;
-const CHART_X_OFFSET_FOR_COUNTING_MAXIMUM_WATTS: u32 = 63;
-const CHART_HEIGHT_PX: f64 = 136.0;
+const CHART_HEIGHT_PX: f32 = 136.0;
 
 /// The type of writer to use for output
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -77,7 +78,10 @@ impl Iterator for VertialPixelIterator<'_> {
 }
 
 struct HourlyPowerGeneration<'a> {
+    /// A reference to the image from which the hourly power generation data will be extracted
     img: &'a DynamicImage,
+    /// The maximum watts on the charts y-axis
+    maximum: f32,
 }
 
 impl<'a> HourlyPowerGeneration<'a> {
@@ -85,8 +89,11 @@ impl<'a> HourlyPowerGeneration<'a> {
     ///
     /// # Returns
     /// A new instance of `HourlyPowerGeneration`
-    fn new(img: &'a DynamicImage) -> Self {
-        HourlyPowerGeneration { img }
+    pub fn from_image(img: &'a DynamicImage) -> Result<Self> {
+        Ok(Self {
+            img,
+            maximum: Self::maximum_watts_in_chart(img)?,
+        })
     }
 
     /// Returns the maximum watts in the chart by counting the number of gray pixels
@@ -97,11 +104,29 @@ impl<'a> HourlyPowerGeneration<'a> {
     /// * `img` - A reference to the image from which the maximum watts will be calculated
     /// # Returns
     /// The maximum watts in the chart unit Watt
-    fn maximum_watts_in_chart(&self) -> usize {
-        let gray = image::Rgba([195, 200, 204, 255]);
-        let vertical_pixel_iter =
-            VertialPixelIterator::new(self.img, CHART_X_OFFSET_FOR_COUNTING_MAXIMUM_WATTS);
-        vertical_pixel_iter.filter(|x| *x == gray).count() * 1000
+    fn maximum_watts_in_chart(img: &DynamicImage) -> Result<f32> {
+        let tmp_dir = TempDir::new("daily-chart")?;
+        let file_path = tmp_dir.path().join("ocr.png");
+
+        // Prepare the image for OCR by cropping, resizing, converting to grayscale, and adjusting contrast.
+        img.clone()
+            .crop(2, 14, 52, 20)
+            // The values here are based on experimentation and observation of the chart images.
+            .resize(150, 200, FilterType::Triangle)
+            .grayscale()
+            .adjust_contrast(-256.0)
+            .to_rgb8()
+            .save(&file_path)?;
+
+        let ocr = Tesseract::new(None, Some("eng"))?;
+        let mut image_set = ocr.set_image(file_path.to_str().unwrap()).unwrap();
+        let watts = image_set
+            .get_text()
+            .with_context(|| "Failed to extract text from the image using OCR")?
+            .trim()
+            .parse::<f32>()
+            .with_context(|| "Failed to parse the extracted text as a number")?;
+        Ok(watts * 1000.0)
     }
 
     fn generation_in_watts(&self, x: u32) -> Result<u32> {
@@ -117,8 +142,7 @@ impl<'a> HourlyPowerGeneration<'a> {
             2 => {
                 let first = dark_blue_pixels.first().unwrap();
                 let last = dark_blue_pixels.last().unwrap();
-                let value = self.maximum_watts_in_chart() as f64 / CHART_HEIGHT_PX
-                    * (last.0 - first.0) as f64;
+                let value = self.maximum / CHART_HEIGHT_PX * (last.0 - first.0) as f32;
                 Ok(value.ceil() as u32) // Round up to the nearest whole number
             }
             _ => anyhow::bail!("Too many dark blue pixels found at x={}", x),
@@ -178,8 +202,10 @@ impl Writer for ConsoleWriter {
         });
 
         if write_total {
-            let max = hourly_power_generation.maximum_watts_in_chart();
-            println!("\nMaximum Watt in chart: {} Wh", max);
+            println!(
+                "\nMaximum Watt in chart: {} Wh",
+                hourly_power_generation.maximum
+            );
 
             let total_watthours = hourly_power_generation.total_watthours()?;
             println!("Total: {} Wh", total_watthours);
@@ -228,7 +254,7 @@ fn main() -> Result<()> {
         WriterType::Console => Box::new(ConsoleWriter),
     };
 
-    let hourly_power_generation = HourlyPowerGeneration::new(&img);
+    let hourly_power_generation = HourlyPowerGeneration::from_image(&img)?;
     writer.write(&hourly_power_generation, args.total)?;
 
     Ok(())

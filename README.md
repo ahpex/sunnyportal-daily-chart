@@ -118,6 +118,16 @@ The tool analyzes the image by:
 
 The extracted data is per design not 100% correct. The numeric data is sampled down to create the chart and this software reads it again. Goal was not to have full accuracy, but to get a feeling of the sun's intensity over one day.
 
+## Building
+
+This crate requires `tesseract` which uses the `leptonia` binding. To build it, the leptionia libraries are required.
+
+To build it on MacOS, you might have to set the SDK root:
+
+```bash
+export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+```
+
 ## License
 
 [MIT License](LICENSE)
