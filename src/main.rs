@@ -82,6 +82,8 @@ struct HourlyPowerGeneration<'a> {
     img: &'a DynamicImage,
     /// The maximum watts on the charts y-axis
     maximum: f32,
+    /// Date of the chart, extracted from the image using OCR
+    date: String,
 }
 
 impl<'a> HourlyPowerGeneration<'a> {
@@ -93,6 +95,7 @@ impl<'a> HourlyPowerGeneration<'a> {
         Ok(Self {
             img,
             maximum: Self::maximum_watts_in_chart(img)?,
+            date: Self::get_date(img)?,
         })
     }
 
@@ -105,13 +108,32 @@ impl<'a> HourlyPowerGeneration<'a> {
     /// # Returns
     /// The maximum watts in the chart unit Watt
     fn maximum_watts_in_chart(img: &DynamicImage) -> Result<f32> {
+        let watts = Self::extract_text_from_image(img, 2, 14, 52, 20)?
+            .parse::<f32>()
+            .with_context(|| "Failed to parse the extracted text as a number")?;
+        Ok(watts * 1000.0)
+    }
+
+    /// Returns the date of the chart by performing OCR on a specific area of the image where the date is located.
+    fn get_date(img: &DynamicImage) -> Result<String> {
+        Ok(Self::extract_text_from_image(img, 286, 8, 195, 15)?
+            .replace("From", "")
+            .replace("from", ""))
+    }
+
+    fn extract_text_from_image(
+        img: &DynamicImage,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<String> {
         let tmp_dir = TempDir::new("daily-chart")?;
         let file_path = tmp_dir.path().join("ocr.png");
 
         // Prepare the image for OCR by cropping, resizing, converting to grayscale, and adjusting contrast.
         img.clone()
-            .crop(2, 14, 52, 20)
-            // The values here are based on experimentation and observation of the chart images.
+            .crop(x, y, width, height)
             .resize(150, 200, FilterType::Triangle)
             .grayscale()
             .adjust_contrast(-256.0)
@@ -120,13 +142,12 @@ impl<'a> HourlyPowerGeneration<'a> {
 
         let ocr = Tesseract::new(None, Some("eng"))?;
         let mut image_set = ocr.set_image(file_path.to_str().unwrap()).unwrap();
-        let watts = image_set
+        let result = image_set
             .get_text()
             .with_context(|| "Failed to extract text from the image using OCR")?
             .trim()
-            .parse::<f32>()
-            .with_context(|| "Failed to parse the extracted text as a number")?;
-        Ok(watts * 1000.0)
+            .to_string();
+        Ok(result)
     }
 
     fn generation_in_watts(&self, x: u32) -> Result<u32> {
@@ -196,6 +217,8 @@ impl Writer for ConsoleWriter {
         hourly_power_generation: &HourlyPowerGeneration,
         write_total: bool,
     ) -> Result<()> {
+        println!("Date: {}\n", hourly_power_generation.date);
+
         let hours_and_watts = hourly_power_generation.hours_watts()?;
         hours_and_watts.iter().for_each(|(hour_of_day, watts)| {
             println!("{:02} {:5} Wh", hour_of_day, watts);
